@@ -1,6 +1,5 @@
 # Enteric Outbreaks SitReps
 # Author: Alana Little, NEPHU (alana.little@austin.org.au)
-# Version 1.0, 03/02/2026
 
 # Load packages
 if (!require("pacman")) install.packages("pacman")

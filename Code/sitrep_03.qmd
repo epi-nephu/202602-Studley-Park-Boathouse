@@ -66,253 +66,28 @@ date_epicurve_end   <- Sys.Date() + 2
 # x-axis limits for epi curves (dates and times)
 datetime_epicurve_start <- lubridate::ymd_hms(paste0("2026-02-15", "00:00:00"))
 datetime_epicurve_end   <- lubridate::ymd_hms(paste0("2026-02-20", "00:00:00"))
+
+# Menu items
+menu_platter <- c("platter_prosciutto", "platter_bresaola", "platter_cheddar", "platter_blue", 
+                  "platter_cornichons", "platter_quince", "platter_lavosh", "platter_bark")
+menu_pizza   <- c("pizza_margherita", "pizza_pumpkin", "pizza_ham", "pizza_chicken", "pizza_prosciutto")
+menu_fruit   <- c("fruit_grapes", "fruit_strawberries", "fruit_watermelon", "fruit_pineapple", 
+                  "fruit_blueberries", "fruit_raspberries")
+menu_dessert <- c("dessert_tart", "dessert_cake", "dessert_crackle", "dessert_donut", "sorbet_orange", 
+                  "sorbet_passionfruit", "sorbet_raspberry", "gelato_honey", "gelato_chocolate", "gelato_vanilla")
+menu_other   <- c("kids_chicken", "kids_fish", "chips", "drink_juice", "drink_other")
 ```
 
 
 ```{r}
-# Read in linelist
-linelist_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Linelist_Studley_Park_", filedate, ".xlsx"),
-                                  sheet     = "Linelist",
-                                  skip      = 2,
-                                  guess_max = min(100000, Inf)) %>% 
-  #
-  janitor::clean_names()
-
-# Data wrangling
-linelist_clean <- linelist_raw %>%
-  dplyr::filter(!is.na(symptomatic)) %>% 
-  #
-  dplyr::mutate(
-    date_of_birth = janitor::convert_to_date(date_of_birth,
-                                             character_fun = lubridate::dmy),
-    #
-    symptom_onset_date = janitor::convert_to_date(symptom_onset_date,
-                                                  character_fun = lubridate::dmy),
-    #
-    symptom_end_date = janitor::convert_to_date(symptom_end_date,
-                                                character_fun = lubridate::dmy),
-    #
-    symptom_onset_time = hms::as_hms(symptom_onset_time),
-    symptom_end_time   = hms::as_hms(symptom_end_time),
-    #
-    symptom_onset_datetime = lubridate::ymd_hms(paste0(symptom_onset_date, symptom_onset_time)),
-    symptom_end_datetime   = lubridate::ymd_hms(paste0(symptom_end_date, symptom_end_time)),
-    #
-    time_to_onset = symptom_onset_datetime - datetime_event,
-    #
-    symptoms_status = dplyr::case_when(
-      !is.na(symptom_onset_date) & is.na(symptom_end_date)  ~ "Ongoing",
-      !is.na(symptom_onset_date) & !is.na(symptom_end_date) ~ "Resolved",
-      TRUE ~ NA_character_),
-    #
-    symptom_end_date = dplyr::case_when(
-      symptoms_status == "Ongoing" ~ lubridate::ymd(Sys.Date()),
-      TRUE ~ symptom_end_date),
-    #
-    age_years = (date_of_birth %--% date_event) / years(1),
-    #
-    age_group = factor(dplyr::case_when(
-      age_years < 10  ~ "0-9 years",
-      age_years < 20  ~ "10-19 years",
-      age_years < 30  ~ "20-29 years",
-      age_years < 40  ~ "30-39 years",
-      age_years < 50  ~ "40-49 years",
-      age_years < 60  ~ "50-59 years",
-      age_years < 70  ~ "60-69 years",
-      age_years < 80  ~ "70-79 years",
-      age_years < 90  ~ "80-89 years",
-      age_years >= 90 ~ "90+ years",
-      TRUE ~ "Not stated"),
-      levels = c("0-9 years",
-                 "10-19 years",
-                 "20-29 years",
-                 "30-39 years",
-                 "40-49 years",
-                 "50-59 years",
-                 "60-69 years",
-                 "70-79 years",
-                 "80-89 years",
-                 "90+ years",
-                 "Not stated")),
-    #
-    sex = factor(dplyr::case_when(
-      sex == "M" ~ "Male",
-      sex == "F" ~ "Female",
-      TRUE ~ NA_character_),
-      levels = c("Male",
-                 "Female")),
-    #
-    abdo_pain = dplyr::case_when(stringr::str_detect(other_specify, "abdo") ~ "Y"),
-    #
-    household = dplyr::case_when(
-      residential_address == "27 Ashe crescent Bellfield, 3081"    ~ "House 01",
-      residential_address == "15 Jordan street Ashwood 3147"       ~ "House 02",
-      residential_address == "13 Maypark ave Ashwood 3147"         ~ "House 03",
-      residential_address == "5 Mclelland Way Burwood East 3151"   ~ "House 04",
-      residential_address == "35 Pembroke Street Surry Hills 3127" ~ "House 05",
-      residential_address == "5 Neale St Preston 3072"             ~ "House 06",
-      residential_address == "1/2 Colvin Ct Glen Waverley 3150"    ~ "House 07",
-      TRUE ~ NA_character_))
+# Read in functions
+source(here::here("Code", "Functions", "f_menu_analyses.R"))
 ```
 
 
 ```{r}
-# Read in survey data
-survey_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Survey_Studley_Park_", filedate, ".xlsx"),
-                                guess_max = min(100000, Inf)) %>% 
-  #
-  janitor::clean_names()
-
-# Exclude test responses
-survey_raw <- survey_raw %>% 
-  dplyr::filter(id > 5)
-
-# Summary questions about party attendance
-survey_attendance <- survey_raw %>% 
-  dplyr::select(name = enter_your_full_name,
-                attended = did_you_or_someone_in_your_household_attend_a_first_birthday_party_on_sunday_15th_february_2026_at_studley_park_boathouse,
-                attended_n = how_many_members_of_your_family_attended_the_event,
-                unwell_n = how_many_members_of_your_family_were_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event)
-
-# Extract information for respondents within each survey
-survey_clean <- survey_raw %>%
-  dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for,
-                date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for,
-                symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event,
-                symptom_onset_date = if_yes_what_was_their_symptom_onset_date,
-                symptoms = if_yes_what_symptoms_did_they_have,
-                symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms,
-                symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end,
-                party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026,
-                party_food = which_of_the_following_foods_did_they_consume_at_the_event,
-                faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample,
-                other_notes = is_there_anything_else_you_would_like_to_tell_us) %>% 
-  #
-  dplyr::bind_rows(survey_raw %>%
-                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_2,
-                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_2,
-                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_2,
-                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_2,
-                                   symptoms = if_yes_what_symptoms_did_they_have_2,
-                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_2,
-                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_2,
-                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_2,
-                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_2,
-                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_2,
-                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_2)) %>% 
-  #
-  dplyr::bind_rows(survey_raw %>%
-                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_3,
-                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_3,
-                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_3,
-                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_3,
-                                   symptoms = if_yes_what_symptoms_did_they_have_3,
-                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_3,
-                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_3,
-                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_3,
-                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_3,
-                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_3,
-                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_3)) %>% 
-  #
-  dplyr::bind_rows(survey_raw %>%
-                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_4,
-                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_4,
-                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_4,
-                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_4,
-                                   symptoms = if_yes_what_symptoms_did_they_have_4,
-                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_4,
-                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_4,
-                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_4,
-                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_4,
-                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_4,
-                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_4)) %>% 
-  #
-  dplyr::bind_rows(survey_raw %>%
-                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_5,
-                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_5,
-                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_5,
-                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_5,
-                                   symptoms = if_yes_what_symptoms_did_they_have_5,
-                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_5,
-                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_5,
-                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_5,
-                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_5,
-                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_5,
-                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_5)) %>% 
-  #
-  dplyr::filter(!is.na(symptomatic)) %>% 
-  #
-  dplyr::mutate(date_of_birth      = lubridate::ymd(date_of_birth),
-                symptom_onset_date = lubridate::ymd(symptom_onset_date),
-                symptom_end_date   = lubridate::ymd(symptom_end_date),
-                #
-                vomiting  = dplyr::case_when(stringr::str_detect(symptoms, "Vomiting") ~ "Y"),
-                diarrhoea = dplyr::case_when(stringr::str_detect(symptoms, "Diarrhoea") ~ "Y"),
-                nausea    = dplyr::case_when(stringr::str_detect(symptoms, "Nausea") ~ "Y"),
-                fever     = dplyr::case_when(stringr::str_detect(symptoms, "Fever") ~ "Y"),
-                abdo_pain = dplyr::case_when(stringr::str_detect(symptoms, "Abdominal pain") ~ "Y"),
-                headache  = dplyr::case_when(stringr::str_detect(symptoms, "Headache") ~ "Y"),
-                lethargy  = dplyr::case_when(stringr::str_detect(symptoms, "Lethargy") ~ "Y"))
-```
-
-
-```{r}
-# Combined linelist and survey data
-linelist_survey <- linelist_clean %>% 
-  dplyr::select(name,
-                date_of_birth,
-                symptomatic,
-                symptom_onset_date,
-                symptom_end_date,
-                vomiting,
-                diarrhoea,
-                nausea,
-                fever,
-                abdo_pain,
-                headache,
-                lethargy) %>%
-  #
-  dplyr::bind_rows(survey_clean %>% 
-                     dplyr::select(name,
-                                   date_of_birth,
-                                   symptomatic,
-                                   symptom_onset_date,
-                                   symptom_end_date,
-                                   vomiting,
-                                   diarrhoea,
-                                   nausea,
-                                   fever,
-                                   abdo_pain,
-                                   headache,
-                                   lethargy)) %>%
-  #
-  dplyr::distinct(name, .keep_all = TRUE) %>%
-  #
-  dplyr::mutate(age_years = (date_of_birth %--% date_event) / years(1),
-                #
-                age_group = factor(dplyr::case_when(
-                  age_years < 10  ~ "0-9 years",
-                  age_years < 20  ~ "10-19 years",
-                  age_years < 30  ~ "20-29 years",
-                  age_years < 40  ~ "30-39 years",
-                  age_years < 50  ~ "40-49 years",
-                  age_years < 60  ~ "50-59 years",
-                  age_years < 70  ~ "60-69 years",
-                  age_years < 80  ~ "70-79 years",
-                  age_years < 90  ~ "80-89 years",
-                  age_years >= 90 ~ "90+ years",
-                  TRUE ~ "Not stated"),
-                  levels = c("0-9 years",
-                             "10-19 years",
-                             "20-29 years",
-                             "30-39 years",
-                             "40-49 years",
-                             "50-59 years",
-                             "60-69 years",
-                             "70-79 years",
-                             "80-89 years",
-                             "90+ years",
-                             "Not stated")))
+# Read in and wrangle data
+source(here::here("Code", "data_prep.R"))
 ```
 
 
@@ -332,11 +107,11 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 <div style="height: 0.5em;"></div>
 
 ::: {.incident-table}
-| Incident name             | Studley Park Boathouse Kew                                        |
+| Incident name             | Studley Park Boathouse [norovirus outbreak]{.red-text}            |
 |:--------------------------|:------------------------------------------------------------------|
 | PHESS ID                  | 320266223985                                                      |
 | Date/time Sit Rep updated | [`r format(Sys.Date(), format = "%d/%m/%Y")`]{.red-text}          |
-| Sit Rep approved by (IC)  |                                                                   |
+| Sit Rep approved by (IC)  | [Claire Gordon]{.red-text}                                        |
 | Sit Rep prepared by (IO)  | Alana Little                                                      |
 
 : {tbl-colwidths="[35,65]"}
@@ -345,6 +120,12 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 <div style="height: 1em;"></div>
 
 ::: {.callout-note title="Overall summary of incident" icon=false collapse=false}
+[NEPHU received a report from a member of the public that multiple people had become unwell with gastroenteritis following a birthday party held at Studley Park Boathouse in Kew on 15/02/2026. Case interviews and a Microsoft Forms survey disseminated to the party attendees via the party host identified 26 symptomatic and nine non-symptomatic attendees.]{.red-text}  
+
+[No clear common food sources were identified and the epidemiology was suggestive of person-to-person spread of viral gastroenteritis. Norovirus was identified in six faecal samples from cases across three households. Boroondara Council conducted a site visit to the venue and identified no food safety or hygiene concerns.]{.red-text} 
+
+[The most recent case had a symptom onset of 24/02/2026. No further cases have been identified associated with the party or with any other events held at the venue, and the outbreak was declared closed on 04/03/2026.]{.red-text}
+
 - Report from a member of the public received by NEPHU after hours on 17/02/2026
   - Multiple unwell people who had attended a birthday party at Studley Park Boathouse on 15/02/2026
   - Food mostly catered by Boathouse, additional items brought in by attendees
@@ -361,13 +142,14 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 - No faecal samples collected at the time of outbreak notification
   - Seven interviewed attendees across four households have agreed to provide faecal samples, relevant Councils arranging sample pot delivery
   - Six faecal samples from three different households have been sent to MDU
-  - All six samples are negative for bacterial pathogens and have been forwarded to VIDRL on 26/02/2026
+  - All six samples are negative for bacterial pathogens [and positive for norovirus]{.red-text}
 
 <div style="height: 0.1em;"></div>
 
 - Menu-based questionnaire distributed to birthday party attendees via party host on 20/02/2026
   - Responses received from 13 attendees as of `r format(Sys.Date(), format = "%d/%m/%Y")`
   - 10/13 survey respondents symptomatic
+  - [No clear food source identified from interviews or survey responses]{.red-text}
 
 <div style="height: 0.1em;"></div>
 
@@ -376,6 +158,12 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
   - No leftover food available for sampling
   - Deep clean carried out by external cleaning company evening of 18/02/2026
   - Environmental swabbing conducted 20/02/2026
+  - [As norovirus has been identified as the causative agent and no bacterial pathogens were isolated from cases, further testing of the environmental swabs will not be required]{.red-text}
+  
+<div style="height: 0.1em;"></div>
+
+- [The most recent case’s symptom onset was on 24/02/2026]{.red-text}
+  - [If no additional cases identified with symptom onset after this date, outbreak eligible for closure on 28/02/2026 (2x 48hr incubation period for norovirus)]{.red-text}
 
 :::
 
@@ -415,6 +203,7 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 
 - Birthday party was held in Perch function room
   - Food mostly catered by Boathouse, additional items brought in by attendees
+  - [No clear food source identified from interviews or survey responses]{.red-text}
   - Children consumed a minimal amount of food due to their young age
   - Playpen was used by multiple young children at the party
 
@@ -767,6 +556,7 @@ Note:<br>
 
 - Environmental swabbing conducted 20/02/2026
   - Included benches, chopping boards, knives, meat slicer used for platters
+  - [As norovirus has been identified as the causative agent and no bacterial pathogens were isolated from cases, further testing of the environmental swabs will not be required]{.red-text}
 
 <div style="height: 0.1em;"></div>
 
@@ -784,13 +574,13 @@ Note:<br>
 
 ## Risk Assessment
 
-- Likely person-person spread of viral gastroenteritis
+- Likely person-person spread of [norovirus]{.red-text}
   - Minimal food consumption by children at the party
   - Children became unwell before parents
   - Likely secondary spread within households (e.g. Household 04)
   - No common food identified by interviewed cases
   - No food safety or hygiene issues identified by Council
-  - Six faecal samples collected from three households and all are negative for bacterial pathogens
+  - Six faecal samples collected from [across]{.red-text} three households are [all]{.red-text} negative for bacterial pathogens [and positive for norovirus]{.red-text}
 
 ***
 
@@ -812,13 +602,7 @@ Note:<br>
 
 ## Further Actions Planned
 
-- Await collection of additional faecal samples from interviewed attendees
-
-- Await results from collected faecal samples
-
-- Await results from environmental sampling
-
-- Await further survey responses
+- [No further actions required]{.red-text}
 
 ```{r}
 #
@@ -910,56 +694,187 @@ linelist_survey %>%
                        extra_css = "border-bottom: 2px solid lightgray;")
 ```
 
-### Food History
+### Food History: Cheese Platter
+
+```{r, warning = FALSE}
+# Create crosstab
+crosstab_platter <- survey_food %>% 
+  f_create_crosstab(menu_items = menu_platter)
+
+# Calculate attack rates, relative risks, and odds ratios
+crosstab_platter <- crosstab_platter %>% 
+  f_calculate_attack()
+
+# Create univariate logistic regression models
+models_platter <- survey_food %>% 
+  f_create_univariate_model(menu_items = menu_platter)
+```
+
 
 ```{r}
-#
-survey_food <- survey_clean %>% 
-  dplyr::select(symptomatic,
-                symptom_onset_date,
-                party_food) %>% 
+# Join crosstab and univariate results into a single, nicely formatted table
+crosstab_platter %>% 
+  dplyr::left_join(models_platter, by = "menu_item") %>% 
   #
-  dplyr::mutate(platter_prosciutto = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - prosciutto") ~ "Y"),
-                platter_bresaola   = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - Bresaola") ~ "Y"),
-                platter_cheddar    = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - cheddar cheese") ~ "Y"),
-                platter_blue       = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - blue cheese") ~ "Y"),
-                platter_cornichons = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - cornichons") ~ "Y"),
-                platter_quince     = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - quince paste") ~ "Y"),
-                platter_lavosh     = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - lavosh crackers") ~ "Y"),
-                platter_bark       = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - bark crackers") ~ "Y"),
-                #
-                kids_chicken = dplyr::case_when(stringr::str_detect(party_food, "Kids meal - chicken nuggets and chips") ~ "Y"),
-                kids_fish    = dplyr::case_when(stringr::str_detect(party_food, "Kids meal - fish and chips") ~ "Y"),
-                #
-                pizza_margherita = dplyr::case_when(stringr::str_detect(party_food, "Margherita pizza") ~ "Y"),
-                pizza_pumpkin    = dplyr::case_when(stringr::str_detect(party_food, "Pumpkin pizza") ~ "Y"),
-                pizza_ham        = dplyr::case_when(stringr::str_detect(party_food, "Ham and pineapple pizza") ~ "Y"),
-                pizza_chicken    = dplyr::case_when(stringr::str_detect(party_food, "Chicken pizza") ~ "Y"),
-                pizza_prosciutto = dplyr::case_when(stringr::str_detect(party_food, "Prosciutto pizza") ~ "Y"),
-                #
-                chips = dplyr::case_when(stringr::str_detect(party_food, "Chips with aioli") ~ "Y"),
-                #
-                fruit_grapes       = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - grapes") ~ "Y"),
-                fruit_strawberries = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - strawberries") ~ "Y"),
-                fruit_watermelon   = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - watermelon") ~ "Y"),
-                fruit_pineapple    = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - pineapple") ~ "Y"),
-                fruit_blueberries  = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - blueberries") ~ "Y"),
-                fruit_raspberries  = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - raspberries") ~ "Y"),
-                #
-                dessert_tart    = dplyr::case_when(stringr::str_detect(party_food, "Blueberry and custard fruit tarts") ~ "Y"),
-                dessert_cake    = dplyr::case_when(stringr::str_detect(party_food, "Chocolate cake with Nutella buttercream") ~ "Y"),
-                dessert_crackle = dplyr::case_when(stringr::str_detect(party_food, "Chocolate crackles") ~ "Y"),
-                dessert_donut   = dplyr::case_when(stringr::str_detect(party_food, "Jam donuts") ~ "Y"),
-                #
-                sorbet_orange       = dplyr::case_when(stringr::str_detect(party_food, "Blood orange sorbet") ~ "Y"),
-                sorbet_passionfruit = dplyr::case_when(stringr::str_detect(party_food, "Passionfruit sorbet") ~ "Y"),
-                sorbet_raspberry    = dplyr::case_when(stringr::str_detect(party_food, "Raspberry sorbet") ~ "Y"),
-                #
-                gelato_honey     = dplyr::case_when(stringr::str_detect(party_food, "Honey gelato") ~ "Y"),
-                gelato_chocolate = dplyr::case_when(stringr::str_detect(party_food, "Chocolate gelato") ~ "Y"),
-                gelato_vanilla   = dplyr::case_when(stringr::str_detect(party_food, "Vanilla gelato") ~ "Y"),
-                #
-                drink_juice = dplyr::case_when(stringr::str_detect(party_food, "Juice") ~ "Y"),
-                drink_other = dplyr::case_when(stringr::str_detect(party_food, "Other drink") ~ "Y"))
+  dplyr::mutate(
+    menu_item = dplyr::case_when(
+      menu_item == "platter_prosciutto" ~ "Prosciutto",
+      menu_item == "platter_bresaola"   ~ "Bresaola",
+      menu_item == "platter_cheddar"    ~ "Cheddar cheese",
+      menu_item == "platter_blue"       ~ "Blue cheese",
+      menu_item == "platter_cornichons" ~ "Cornichons",
+      menu_item == "platter_quince"     ~ "Quince paste",
+      menu_item == "platter_lavosh"     ~ "Lavosh crackers",
+      menu_item == "platter_bark"       ~ "Bark crackers")) %>%
+  #
+  dplyr::arrange(menu_item, consumed) %>% 
+  #
+  f_format_table()
+```
+
+### Food History: Pizza
+
+```{r, warning = FALSE}
+# Create crosstab
+crosstab_pizza <- survey_food %>% 
+  f_create_crosstab(menu_items = menu_pizza)
+
+# Calculate attack rates, relative risks, and odds ratios
+crosstab_pizza <- crosstab_pizza %>% 
+  f_calculate_attack()
+
+# Create univariate logistic regression models
+models_pizza <- survey_food %>% 
+  f_create_univariate_model(menu_items = menu_pizza)
+```
+
+
+```{r}
+# Join crosstab and univariate results into a single, nicely formatted table
+crosstab_pizza %>% 
+  dplyr::left_join(models_pizza, by = "menu_item") %>% 
+  #
+  dplyr::mutate(
+    menu_item = dplyr::case_when(
+      menu_item == "pizza_margherita" ~ "Margherita pizza",
+      menu_item == "pizza_pumpkin"    ~ "Pumpkin pizza",
+      menu_item == "pizza_ham"        ~ "Ham and pineapple pizza",
+      menu_item == "pizza_chicken"    ~ "Chicken pizza",
+      menu_item == "pizza_prosciutto" ~ "Prosciutto pizza")) %>%
+  #
+  dplyr::arrange(menu_item, consumed) %>% 
+  #
+  f_format_table()
+```
+
+### Food History: Fruit Platter
+
+```{r, warning = FALSE}
+# Create crosstab
+crosstab_fruit <- survey_food %>% 
+  f_create_crosstab(menu_items = menu_fruit)
+
+# Calculate attack rates, relative risks, and odds ratios
+crosstab_fruit <- crosstab_fruit %>% 
+  f_calculate_attack()
+
+# Create univariate logistic regression models
+models_fruit <- survey_food %>% 
+  f_create_univariate_model(menu_items = menu_fruit)
+```
+
+
+```{r}
+# Join crosstab and univariate results into a single, nicely formatted table
+crosstab_fruit %>% 
+  dplyr::left_join(models_fruit, by = "menu_item") %>% 
+  #
+  dplyr::mutate(
+    menu_item = dplyr::case_when(
+      menu_item == "fruit_grapes"       ~ "Grapes",
+      menu_item == "fruit_strawberries" ~ "Strawberries",
+      menu_item == "fruit_watermelon"   ~ "Watermelon",
+      menu_item == "fruit_pineapple"    ~ "Pineapple",
+      menu_item == "fruit_blueberries"  ~ "Blueberries",
+      menu_item == "fruit_raspberries"  ~ "Raspberries")) %>%
+  #
+  dplyr::arrange(menu_item, consumed) %>% 
+  #
+  f_format_table()
+```
+
+### Food History: Dessert
+
+```{r, warning = FALSE}
+# Create crosstab
+crosstab_dessert <- survey_food %>% 
+  f_create_crosstab(menu_items = menu_dessert)
+
+# Calculate attack rates, relative risks, and odds ratios
+crosstab_dessert <- crosstab_dessert %>% 
+  f_calculate_attack()
+
+# Create univariate logistic regression models
+models_dessert <- survey_food %>% 
+  f_create_univariate_model(menu_items = menu_dessert)
+```
+
+
+```{r}
+# Join crosstab and univariate results into a single, nicely formatted table
+crosstab_dessert %>% 
+  dplyr::left_join(models_dessert, by = "menu_item") %>% 
+  #
+  dplyr::mutate(
+    menu_item = dplyr::case_when(
+      menu_item == "dessert_tart"        ~ "Blueberry and custard tarts",
+      menu_item == "dessert_cake"        ~ "Chocolate cake",
+      menu_item == "dessert_crackle"     ~ "Chocolate crackles",
+      menu_item == "dessert_donut"       ~ "Jam donuts",
+      menu_item == "sorbet_orange"       ~ "Sorbet (blood orange)",
+      menu_item == "sorbet_passionfruit" ~ "Sorbet (passionfruit)",
+      menu_item == "sorbet_raspberry"    ~ "Sorbet (raspberry)",
+      menu_item == "gelato_honey"        ~ "Gelato (honey)",
+      menu_item == "gelato_chocolate"    ~ "Gelato (chocolate)",
+      menu_item == "gelato_vanilla"      ~ "Gelato (vanilla)")) %>%
+  #
+  dplyr::arrange(menu_item, consumed) %>% 
+  #
+  f_format_table()
+```
+
+### Food History: Other Foods
+
+```{r, warning = FALSE}
+# Create crosstab
+crosstab_other <- survey_food %>% 
+  f_create_crosstab(menu_items = menu_other)
+
+# Calculate attack rates, relative risks, and odds ratios
+crosstab_other <- crosstab_other %>% 
+  f_calculate_attack()
+
+# Create univariate logistic regression models
+models_other <- survey_food %>% 
+  f_create_univariate_model(menu_items = menu_other)
+```
+
+
+```{r}
+# Join crosstab and univariate results into a single, nicely formatted table
+crosstab_other %>% 
+  dplyr::left_join(models_other, by = "menu_item") %>% 
+  #
+  dplyr::mutate(
+    menu_item = dplyr::case_when(
+      menu_item == "kids_chicken" ~ "Kids meal (chicken and chips)",
+      menu_item == "kids_fish"    ~ "Kids meal (fish and chips)",
+      menu_item == "chips"        ~ "Chips",
+      menu_item == "drink_juice"  ~ "Drink (juice)",
+      menu_item == "drink_other"  ~ "Drink (other)")) %>%
+  #
+  dplyr::arrange(menu_item, consumed) %>% 
+  #
+  f_format_table()
 ```
 
