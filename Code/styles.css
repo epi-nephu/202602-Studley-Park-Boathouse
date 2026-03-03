@@ -1,0 +1,111 @@
+#toc-title {
+  color: black;
+  font-weight: bold;
+}
+
+nav#TOC a span {
+  color: inherit !important;
+}
+
+h1 {
+  font-family: "Karla";
+  text-align: center;
+  font-weight: bold;
+  font-size: 24pt;
+  color: #191D43;
+}
+
+h2.unnumbered {
+  font-family: "Karla";
+  text-align: center;
+  font-weight: bold;
+  font-size: 20pt;
+  color: #191D43;
+}
+
+h2 {
+  font-family: "Karla";
+  font-weight: bold;
+  font-size: 16pt;
+  color: #5BC788;
+  margin-top: 0pt;
+  margin-bottom: 0pt;
+  border-bottom: none;
+}
+
+h3 {
+  font-family: "Karla";
+  font-weight: bold;
+  font-size: 14pt;
+  color: #5BC788;
+  margin-top: 5pt;
+}
+
+body {
+  font-family: "Karla";
+  font-size: 13pt;
+}
+
+.incident-table table {
+  border-collapse: collapse;
+}
+
+.incident-table th,
+.incident-table td {
+  border: 1px solid black;
+  padding: 0.4em 0.6em;
+}
+
+.incident-table th:first-child,
+.incident-table td:first-child {
+  background-color: #FFA78C;
+}
+
+li > ul {
+  margin-top: 0pt;
+  margin-bottom: 5pt;
+}
+
+.red-text {
+  color: red;
+}
+
+.panel-tabset .tab-content {
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.footnote {
+  font-family: "Karla";
+  font-size: 11pt;
+  font-style: italic;
+}
+
+.callout-note {
+  border-left-color: #191D43 !important;
+}
+
+.callout-note .callout-header {
+  font-family: "Karla";
+  font-size: 13pt !important;
+  background-color: #191D43 !important;
+  color: white !important;
+}
+
+.callout-tip {
+  border-left-color: #FFA78C !important;
+}
+
+.callout-tip .callout-header {
+  font-family: "Karla";
+  font-size: 13pt !important;
+  background-color: #FFA78C !important;
+  color: black !important;
+}
+
+.callout-body {
+  font-family: "Karla";
+  font-size: 13pt !important;
+  margin-bottom: 0pt !important;
+}
+

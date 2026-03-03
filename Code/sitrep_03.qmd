@@ -1,0 +1,965 @@
+---
+title-block: false
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-expand: true
+    toc-location: left
+    anchor-sections: false
+    embed-resources: true
+    css: styles.css
+    echo: false
+    warning: false
+    message: false
+    grid: 
+      body-width: 1250px
+---
+
+```{r}
+#
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(here,
+               tidyverse,
+               tidyr,
+               rmarkdown,
+               quarto,
+               bsicons,
+               rlang,
+               glue,
+               janitor,
+               readxl,
+               sf,
+               knitr,
+               kableExtra,
+               colorRamps,
+               extrafont,
+               ggnewscale,
+               plotly,
+               leaflet)
+```
+
+
+```{r}
+#
+options(knitr.kable.NA = '--')
+
+here::i_am("Code/sitrep_03.qmd")
+```
+
+
+```{r}
+# Date of report generation
+datetime_update <- paste0("data as of ", format(Sys.Date(), format = "%d/%m/%Y"))
+filedate        <- format(Sys.Date(), format = "%Y%m%d")
+
+# Date and start time of common event
+date_event     <- lubridate::ymd("2026-02-15")
+datetime_event <- lubridate::ymd_hms(paste0("2026-02-15", "15:00:00"))
+
+# x-axis limits for epi curves (dates only)
+date_epicurve_start <- lubridate::ymd(date_event - days(3))
+date_epicurve_end   <- Sys.Date() + 2
+
+# x-axis limits for epi curves (dates and times)
+datetime_epicurve_start <- lubridate::ymd_hms(paste0("2026-02-15", "00:00:00"))
+datetime_epicurve_end   <- lubridate::ymd_hms(paste0("2026-02-20", "00:00:00"))
+```
+
+
+```{r}
+# Read in linelist
+linelist_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Linelist_Studley_Park_", filedate, ".xlsx"),
+                                  sheet     = "Linelist",
+                                  skip      = 2,
+                                  guess_max = min(100000, Inf)) %>% 
+  #
+  janitor::clean_names()
+
+# Data wrangling
+linelist_clean <- linelist_raw %>%
+  dplyr::filter(!is.na(symptomatic)) %>% 
+  #
+  dplyr::mutate(
+    date_of_birth = janitor::convert_to_date(date_of_birth,
+                                             character_fun = lubridate::dmy),
+    #
+    symptom_onset_date = janitor::convert_to_date(symptom_onset_date,
+                                                  character_fun = lubridate::dmy),
+    #
+    symptom_end_date = janitor::convert_to_date(symptom_end_date,
+                                                character_fun = lubridate::dmy),
+    #
+    symptom_onset_time = hms::as_hms(symptom_onset_time),
+    symptom_end_time   = hms::as_hms(symptom_end_time),
+    #
+    symptom_onset_datetime = lubridate::ymd_hms(paste0(symptom_onset_date, symptom_onset_time)),
+    symptom_end_datetime   = lubridate::ymd_hms(paste0(symptom_end_date, symptom_end_time)),
+    #
+    time_to_onset = symptom_onset_datetime - datetime_event,
+    #
+    symptoms_status = dplyr::case_when(
+      !is.na(symptom_onset_date) & is.na(symptom_end_date)  ~ "Ongoing",
+      !is.na(symptom_onset_date) & !is.na(symptom_end_date) ~ "Resolved",
+      TRUE ~ NA_character_),
+    #
+    symptom_end_date = dplyr::case_when(
+      symptoms_status == "Ongoing" ~ lubridate::ymd(Sys.Date()),
+      TRUE ~ symptom_end_date),
+    #
+    age_years = (date_of_birth %--% date_event) / years(1),
+    #
+    age_group = factor(dplyr::case_when(
+      age_years < 10  ~ "0-9 years",
+      age_years < 20  ~ "10-19 years",
+      age_years < 30  ~ "20-29 years",
+      age_years < 40  ~ "30-39 years",
+      age_years < 50  ~ "40-49 years",
+      age_years < 60  ~ "50-59 years",
+      age_years < 70  ~ "60-69 years",
+      age_years < 80  ~ "70-79 years",
+      age_years < 90  ~ "80-89 years",
+      age_years >= 90 ~ "90+ years",
+      TRUE ~ "Not stated"),
+      levels = c("0-9 years",
+                 "10-19 years",
+                 "20-29 years",
+                 "30-39 years",
+                 "40-49 years",
+                 "50-59 years",
+                 "60-69 years",
+                 "70-79 years",
+                 "80-89 years",
+                 "90+ years",
+                 "Not stated")),
+    #
+    sex = factor(dplyr::case_when(
+      sex == "M" ~ "Male",
+      sex == "F" ~ "Female",
+      TRUE ~ NA_character_),
+      levels = c("Male",
+                 "Female")),
+    #
+    abdo_pain = dplyr::case_when(stringr::str_detect(other_specify, "abdo") ~ "Y"),
+    #
+    household = dplyr::case_when(
+      residential_address == "27 Ashe crescent Bellfield, 3081"    ~ "House 01",
+      residential_address == "15 Jordan street Ashwood 3147"       ~ "House 02",
+      residential_address == "13 Maypark ave Ashwood 3147"         ~ "House 03",
+      residential_address == "5 Mclelland Way Burwood East 3151"   ~ "House 04",
+      residential_address == "35 Pembroke Street Surry Hills 3127" ~ "House 05",
+      residential_address == "5 Neale St Preston 3072"             ~ "House 06",
+      residential_address == "1/2 Colvin Ct Glen Waverley 3150"    ~ "House 07",
+      TRUE ~ NA_character_))
+```
+
+
+```{r}
+# Read in survey data
+survey_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Survey_Studley_Park_", filedate, ".xlsx"),
+                                guess_max = min(100000, Inf)) %>% 
+  #
+  janitor::clean_names()
+
+# Exclude test responses
+survey_raw <- survey_raw %>% 
+  dplyr::filter(id > 5)
+
+# Summary questions about party attendance
+survey_attendance <- survey_raw %>% 
+  dplyr::select(name = enter_your_full_name,
+                attended = did_you_or_someone_in_your_household_attend_a_first_birthday_party_on_sunday_15th_february_2026_at_studley_park_boathouse,
+                attended_n = how_many_members_of_your_family_attended_the_event,
+                unwell_n = how_many_members_of_your_family_were_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event)
+
+# Extract information for respondents within each survey
+survey_clean <- survey_raw %>%
+  dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for,
+                date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for,
+                symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event,
+                symptom_onset_date = if_yes_what_was_their_symptom_onset_date,
+                symptoms = if_yes_what_symptoms_did_they_have,
+                symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms,
+                symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end,
+                party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026,
+                party_food = which_of_the_following_foods_did_they_consume_at_the_event,
+                faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample,
+                other_notes = is_there_anything_else_you_would_like_to_tell_us) %>% 
+  #
+  dplyr::bind_rows(survey_raw %>%
+                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_2,
+                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_2,
+                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_2,
+                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_2,
+                                   symptoms = if_yes_what_symptoms_did_they_have_2,
+                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_2,
+                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_2,
+                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_2,
+                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_2,
+                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_2,
+                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_2)) %>% 
+  #
+  dplyr::bind_rows(survey_raw %>%
+                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_3,
+                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_3,
+                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_3,
+                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_3,
+                                   symptoms = if_yes_what_symptoms_did_they_have_3,
+                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_3,
+                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_3,
+                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_3,
+                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_3,
+                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_3,
+                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_3)) %>% 
+  #
+  dplyr::bind_rows(survey_raw %>%
+                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_4,
+                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_4,
+                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_4,
+                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_4,
+                                   symptoms = if_yes_what_symptoms_did_they_have_4,
+                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_4,
+                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_4,
+                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_4,
+                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_4,
+                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_4,
+                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_4)) %>% 
+  #
+  dplyr::bind_rows(survey_raw %>%
+                     dplyr::select(name = what_is_the_name_of_the_person_you_are_completing_this_survey_for_5,
+                                   date_of_birth = what_is_the_date_of_birth_of_the_person_you_are_completing_this_for_5,
+                                   symptomatic = has_this_person_been_unwell_with_gastroenteritis_symptoms_in_the_week_after_the_event_5,
+                                   symptom_onset_date = if_yes_what_was_their_symptom_onset_date_5,
+                                   symptoms = if_yes_what_symptoms_did_they_have_5,
+                                   symptoms_ongoing = are_they_still_experiencing_gastroenteritis_symptoms_5,
+                                   symptom_end_date = if_they_have_recovered_when_did_their_symptoms_end_5,
+                                   party_attend = did_this_person_attend_the_birthday_party_at_studley_park_boathouse_on_15_02_2026_5,
+                                   party_food = which_of_the_following_foods_did_they_consume_at_the_event_5,
+                                   faecal_sample = a_stool_poo_sample_helps_us_work_out_the_cause_of_gastroenteritis_have_they_are_they_going_to_provide_a_stool_sample_5,
+                                   other_notes = is_there_anything_else_you_would_like_to_tell_us_5)) %>% 
+  #
+  dplyr::filter(!is.na(symptomatic)) %>% 
+  #
+  dplyr::mutate(date_of_birth      = lubridate::ymd(date_of_birth),
+                symptom_onset_date = lubridate::ymd(symptom_onset_date),
+                symptom_end_date   = lubridate::ymd(symptom_end_date),
+                #
+                vomiting  = dplyr::case_when(stringr::str_detect(symptoms, "Vomiting") ~ "Y"),
+                diarrhoea = dplyr::case_when(stringr::str_detect(symptoms, "Diarrhoea") ~ "Y"),
+                nausea    = dplyr::case_when(stringr::str_detect(symptoms, "Nausea") ~ "Y"),
+                fever     = dplyr::case_when(stringr::str_detect(symptoms, "Fever") ~ "Y"),
+                abdo_pain = dplyr::case_when(stringr::str_detect(symptoms, "Abdominal pain") ~ "Y"),
+                headache  = dplyr::case_when(stringr::str_detect(symptoms, "Headache") ~ "Y"),
+                lethargy  = dplyr::case_when(stringr::str_detect(symptoms, "Lethargy") ~ "Y"))
+```
+
+
+```{r}
+# Combined linelist and survey data
+linelist_survey <- linelist_clean %>% 
+  dplyr::select(name,
+                date_of_birth,
+                symptomatic,
+                symptom_onset_date,
+                symptom_end_date,
+                vomiting,
+                diarrhoea,
+                nausea,
+                fever,
+                abdo_pain,
+                headache,
+                lethargy) %>%
+  #
+  dplyr::bind_rows(survey_clean %>% 
+                     dplyr::select(name,
+                                   date_of_birth,
+                                   symptomatic,
+                                   symptom_onset_date,
+                                   symptom_end_date,
+                                   vomiting,
+                                   diarrhoea,
+                                   nausea,
+                                   fever,
+                                   abdo_pain,
+                                   headache,
+                                   lethargy)) %>%
+  #
+  dplyr::distinct(name, .keep_all = TRUE) %>%
+  #
+  dplyr::mutate(age_years = (date_of_birth %--% date_event) / years(1),
+                #
+                age_group = factor(dplyr::case_when(
+                  age_years < 10  ~ "0-9 years",
+                  age_years < 20  ~ "10-19 years",
+                  age_years < 30  ~ "20-29 years",
+                  age_years < 40  ~ "30-39 years",
+                  age_years < 50  ~ "40-49 years",
+                  age_years < 60  ~ "50-59 years",
+                  age_years < 70  ~ "60-69 years",
+                  age_years < 80  ~ "70-79 years",
+                  age_years < 90  ~ "80-89 years",
+                  age_years >= 90 ~ "90+ years",
+                  TRUE ~ "Not stated"),
+                  levels = c("0-9 years",
+                             "10-19 years",
+                             "20-29 years",
+                             "30-39 years",
+                             "40-49 years",
+                             "50-59 years",
+                             "60-69 years",
+                             "70-79 years",
+                             "80-89 years",
+                             "90+ years",
+                             "Not stated")))
+```
+
+
+```{r}
+#| out-width: "100%"
+knitr::include_graphics(here::here("Images", "nephu_logo.png"))
+```
+
+# Situation Report [#3]{.red-text}
+
+## Outbreak {.unnumbered .unlisted}
+
+<div style="height: 0.5em;"></div>
+
+*Information contained in this Sit Rep is sensitive, confidential, and not intended for wider distribution or use beyond the PH-IMT.*
+
+<div style="height: 0.5em;"></div>
+
+::: {.incident-table}
+| Incident name             | Studley Park Boathouse Kew                                        |
+|:--------------------------|:------------------------------------------------------------------|
+| PHESS ID                  | 320266223985                                                      |
+| Date/time Sit Rep updated | [`r format(Sys.Date(), format = "%d/%m/%Y")`]{.red-text}          |
+| Sit Rep approved by (IC)  |                                                                   |
+| Sit Rep prepared by (IO)  | Alana Little                                                      |
+
+: {tbl-colwidths="[35,65]"}
+:::
+
+<div style="height: 1em;"></div>
+
+::: {.callout-note title="Overall summary of incident" icon=false collapse=false}
+- Report from a member of the public received by NEPHU after hours on 17/02/2026
+  - Multiple unwell people who had attended a birthday party at Studley Park Boathouse on 15/02/2026
+  - Food mostly catered by Boathouse, additional items brought in by attendees
+  - Approximately 41/75 attendees unwell with gastroenteritis symptoms
+
+<div style="height: 0.1em;"></div>
+
+- Interviews conducted with 22 attendees across seven households
+  - 16/21 interviewed attendees symptomatic
+  - Most common symptoms: nausea (17/26, 65%), vomiting (17/26, 65%), and lethargy (14/26, 54%)
+
+<div style="height: 0.1em;"></div>
+
+- No faecal samples collected at the time of outbreak notification
+  - Seven interviewed attendees across four households have agreed to provide faecal samples, relevant Councils arranging sample pot delivery
+  - Six faecal samples from three different households have been sent to MDU
+  - All six samples are negative for bacterial pathogens and have been forwarded to VIDRL on 26/02/2026
+
+<div style="height: 0.1em;"></div>
+
+- Menu-based questionnaire distributed to birthday party attendees via party host on 20/02/2026
+  - Responses received from 13 attendees as of `r format(Sys.Date(), format = "%d/%m/%Y")`
+  - 10/13 survey respondents symptomatic
+
+<div style="height: 0.1em;"></div>
+
+- Boroondara Council notified 18/02/2026 and conducted site visit 19/02/2026
+  - No ill food handlers or staff reported
+  - No leftover food available for sampling
+  - Deep clean carried out by external cleaning company evening of 18/02/2026
+  - Environmental swabbing conducted 20/02/2026
+
+:::
+
+<div style="height: 0.125em;"></div>
+
+::: {.callout-tip title="Outbreak case definitions" icon=false collapse=false}
+**Confirmed case:** Individuals with a clinically compatible illness who attended the birthday party at Studley Park Boathouse on 15/02/2026 or who have an epidemiological link to a confirmed case.
+:::
+
+***
+
+## Epidemiological Investigations
+
+- Report from a member of the public received by NEPHU after hours on 17/02/2026
+  - Multiple unwell people who had attended a birthday party at Studley Park Boathouse on 15/02/2026
+  - Approximately 41/75 attendees unwell with gastroenteritis symptoms
+
+<div style="height: 0.1em;"></div>
+
+- 26 symptomatic attendees and nine non-symptomatic attendees have been identified through interviews and survey responses
+  - Interviews conducted with 16 symptomatic attendees and six non-symptomatic attendees
+  - As of 24/02/2026, survey responses have been received from 10 additional symptomatic attendees and three non-symptomatic attendees
+
+<div style="height: 0.1em;"></div>
+
+- Two symptomatic survey respondents have also completed an interview
+  - Five survey respondents were anonymous, and it is unknown whether these respondents also completed an interview
+
+<div style="height: 0.1em;"></div>
+
+- The most common symptoms reported by symptomatic attendees were nausea (17/26, 65%), vomiting (17/26, 65%), and lethargy (14/26, 54%)
+  - Noted in interviews that young children became unwell first, followed by parents becoming unwell
+  - Median age of symptomatic attendees: 7 years (range 1 to 64 years)
+  - Epicurve by household suggests secondary household transmission occurring
+
+<div style="height: 0.1em;"></div>
+
+- Birthday party was held in Perch function room
+  - Food mostly catered by Boathouse, additional items brought in by attendees
+  - Children consumed a minimal amount of food due to their young age
+  - Playpen was used by multiple young children at the party
+
+### Epicurves
+
+**Figure 1** shows an epicurve by symptom onset date.
+
+**Figure 2** shows an epicurve by symptom onset date and time.
+
+**Figure 3** shows an epicurve by symptom onset date and time, and household.
+
+**Figure 4** shows an epicurve by symptom onset date and time, and age group.
+
+:::: {.panel-tabset}
+
+#### Figure 1
+
+**Number of people reporting symptoms, interviewed attendees and survey respondents, by symptom onset date, [`r datetime_update`]{.red-text}**
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+#
+data_histogram <- linelist_survey %>% 
+  dplyr::filter(!is.na(symptom_onset_date)) %>% 
+  #
+  count(symptom_onset_date) %>% 
+  #
+  dplyr::mutate(hover_text = paste0("Symptom onset: ", format(symptom_onset_date, "%d/%m/%Y"), "<br>",
+                                    "Cases: ", n))
+
+figure <- data_histogram %>%
+  ggplot(aes(x = symptom_onset_date, y = n, text = hover_text)) +
+  #
+  geom_col(color = "black",
+           fill  = "turquoise3",
+           width = 1,
+           alpha = 1) +
+  #
+  geom_segment(aes(x = date_event, xend = date_event, y = 0, yend = max(n, na.rm = TRUE)),
+               color       = "purple",
+               linetype    = "dashed",
+               linewidth   = 0.25,
+               inherit.aes = FALSE) +
+  #
+  scale_x_date(date_breaks = "1 day",
+               date_labels = "%d-%b") +
+  #
+  coord_cartesian(xlim = c(date_epicurve_start, date_epicurve_end)) +
+  #
+  scale_y_continuous(limits = c(0, NA),
+                     breaks = scales::breaks_width(1),
+                     expand = expansion(add = c(0, 0.1))) +
+  #
+  labs(x = NULL,
+       y = NULL) +
+  #
+  theme_classic() +
+  #
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+figure %>%
+  plotly::ggplotly(tooltip = "text") %>%
+  #
+  plotly::layout(hovermode = "x",
+                 #
+                 modebar = list(orientation = 'v'),
+                 #
+                 xaxis = list(title = list(text     = "Symptom onset date",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 15)),
+                 #
+                 yaxis = list(title = list(text     = "Number of cases",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 10)))
+```
+
+::: {.footnote}
+Note:<br>
+- The event date is marked with a dashed purple line.
+:::
+
+#### Figure 2
+
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time, [`r datetime_update`]{.red-text}**
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+#
+data_histogram <- linelist_clean %>% 
+  dplyr::filter(!is.na(symptom_onset_datetime)) %>%
+  #
+  dplyr::group_by(hours_group = lubridate::floor_date(symptom_onset_datetime, "3 hours")) %>% 
+  dplyr::count() %>% 
+  dplyr::ungroup() %>% 
+  #
+  dplyr::mutate(hover_text = paste0("Symptom onset: ", format(hours_group, "%d/%m/%Y %H:%M"), "<br>",
+                                    "Cases: ", n))
+ 
+figure <- data_histogram %>%
+  ggplot(aes(x = hours_group, y = n, text = hover_text)) +
+  #
+  geom_col(color = "black",
+           fill  = "turquoise3",
+           width = 10800,
+           alpha = 1) +
+  #
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+               color       = "purple",
+               linetype    = "dashed",
+               linewidth   = 0.25,
+               inherit.aes = FALSE) +
+  #
+  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "3 hours"), 
+                                datetime_epicurve_end,
+                                by = "6 hours"),
+                   #
+                   date_labels = "%d-%b %H:%M",
+                   #
+                   expand = c(0, 0)) +
+  #
+  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
+  #
+  scale_y_continuous(limits = c(0, 5),
+                     breaks = scales::breaks_width(1),
+                     expand = expansion(add = c(0, 0.125))) +
+  #
+  labs(x = NULL,
+       y = NULL) +
+  #
+  theme_classic() +
+  #
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+figure %>% 
+  plotly::ggplotly(tooltip = "text") %>%
+  #
+  plotly::layout(hovermode = "x",
+                 #
+                 modebar = list(orientation = 'v'),
+                 #
+                 xaxis = list(title = list(text     = "Symptom onset date and time",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 20)),
+                 #
+                 yaxis = list(title = list(text     = "Number of cases",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 10)),
+                 #
+                 legend = list(x = 0.5,
+                               y = -0.25,
+                               #
+                               orientation = "h",
+                               xanchor     = "center"))
+```
+
+::: {.footnote}
+Note:<br>
+- The event start date and time is marked with a dashed purple line.<br>
+- 4x cases with unknown symptom onset times have been excluded.
+:::
+
+#### Figure 3
+
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and household, [`r datetime_update`]{.red-text}**
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+#
+data_histogram <- linelist_clean %>% 
+  dplyr::filter(!is.na(symptom_onset_datetime)) %>%
+  #
+  dplyr::group_by(hours_group = lubridate::floor_date(symptom_onset_datetime, "3 hours"), household) %>% 
+  dplyr::count() %>% 
+  dplyr::ungroup() %>% 
+  #
+  dplyr::mutate(hover_text = paste0("Symptom onset: ", format(hours_group, "%d/%m/%Y %H:%M"), "<br>",
+                                    "Household: ", household, "<br>",
+                                    "Cases: ", n))
+
+figure <- data_histogram %>%
+  ggplot(aes(x = hours_group, y = n, fill = household, text = hover_text)) +
+  #
+  geom_col(color = "black",
+           alpha = 1) +
+  #
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+               color       = "purple",
+               linetype    = "dashed",
+               linewidth   = 0.25,
+               inherit.aes = FALSE) +
+  #
+  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "6 hours"), 
+                                datetime_epicurve_end,
+                                by = "6 hours"),
+                   #
+                   date_labels = "%d-%b %H:%M",
+                   #
+                   expand = c(0, 0)) +
+  #
+  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
+  #
+  scale_y_continuous(limits = c(0, 5),
+                     breaks = scales::breaks_width(1),
+                     expand = expansion(add = c(0, 0.125))) +
+  #
+  labs(x    = NULL,
+       y    = NULL,
+       fill = NULL) +
+  #
+  theme_classic() +
+  #
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+figure %>% 
+  plotly::ggplotly(tooltip = "text") %>%
+  #
+  plotly::layout(hovermode = "closest",
+                 #
+                 modebar = list(orientation = 'v'),
+                 #
+                 xaxis = list(title = list(text     = "Symptom onset date and time",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 20)),
+                 #
+                 yaxis = list(title = list(text     = "Number of cases",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 10)),
+                 #
+                 legend = list(x = 0.5,
+                               y = -0.55,
+                               #
+                               orientation = "h",
+                               xanchor     = "center"))
+```
+
+::: {.footnote}
+Note:<br>
+- The event start date and time is marked with a dashed purple line.<br>
+- 4x cases with unknown symptom onset times have been excluded.
+:::
+
+#### Figure 4
+
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and age, [`r datetime_update`]{.red-text}**
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+#
+data_histogram <- linelist_clean %>% 
+  dplyr::filter(!is.na(symptom_onset_datetime)) %>%
+  #
+  dplyr::group_by(hours_group = lubridate::floor_date(symptom_onset_datetime, "3 hours"), age_group) %>% 
+  dplyr::count() %>% 
+  dplyr::ungroup() %>% 
+  #
+  dplyr::mutate(hover_text = paste0("Symptom onset: ", format(hours_group, "%d/%m/%Y %H:%M"), "<br>",
+                                    "Age: ", age_group, "<br>",
+                                    "Cases: ", n))
+
+figure <- data_histogram %>%
+  ggplot(aes(x = hours_group, y = n, fill = age_group, text = hover_text)) +
+  #
+  geom_col(color = "black",
+           alpha = 1) +
+  #
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+               color       = "purple",
+               linetype    = "dashed",
+               linewidth   = 0.25,
+               inherit.aes = FALSE) +
+  #
+  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "6 hours"), 
+                                datetime_epicurve_end,
+                                by = "6 hours"),
+                   #
+                   date_labels = "%d-%b %H:%M",
+                   #
+                   expand = c(0, 0)) +
+  #
+  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
+  #
+  scale_y_continuous(limits = c(0, 5),
+                     breaks = scales::breaks_width(1),
+                     expand = expansion(add = c(0, 0.125))) +
+  #
+  labs(x    = NULL,
+       y    = NULL,
+       fill = NULL) +
+  #
+  theme_classic() +
+  #
+  theme(axis.text.x = element_text(angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+
+figure %>% 
+  plotly::ggplotly(tooltip = "text") %>%
+  #
+  plotly::layout(hovermode = "closest",
+                 #
+                 modebar = list(orientation = 'v'),
+                 #
+                 xaxis = list(title = list(text     = "Symptom onset date and time",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 20)),
+                 #
+                 yaxis = list(title = list(text     = "Number of cases",
+                                           font     = list(size = 13, family = "Arial"),
+                                           standoff = 10)),
+                 #
+                 legend = list(x = 0.5,
+                               y = -0.45,
+                               #
+                               orientation = "h",
+                               xanchor     = "center"))
+```
+
+::: {.footnote}
+Note:<br>
+- The event start date and time is marked with a dashed purple line.<br>
+- 4x cases with unknown symptom onset times have been excluded.
+:::
+
+::::
+
+***
+
+## Environmental Investigations
+
+- Boroondara Council conducted site visit 19/02/2026
+  - No ill food handlers or staff reported
+  - No food safety or hygiene issues identified
+
+<div style="height: 0.1em;"></div>
+
+- Deep clean carried out by external cleaning company evening of 18/02/2026
+  - Included deep clean of children’s play area and toilets in the Perch function room
+
+<div style="height: 0.1em;"></div>
+
+- Environmental swabbing conducted 20/02/2026
+  - Included benches, chopping boards, knives, meat slicer used for platters
+
+<div style="height: 0.1em;"></div>
+
+- Menu for food served at birthday party and standard menu for Boathouse provided to Council
+  - No leftover food available for sampling
+
+<div style="height: 0.1em;"></div>
+
+- Booking list for day of birthday party and surrounding days provided to Council
+  - Further follow-up of booking list not planned at this stage as likely viral gastroenteritis (refer to Risk Assessment section)
+  - In addition, booking list consists of >150 individual people who attended on 15/02/2026 so would not be feasible to contact all individuals at this stage
+  - Venue does not report illness being reported by other customers
+
+***
+
+## Risk Assessment
+
+- Likely person-person spread of viral gastroenteritis
+  - Minimal food consumption by children at the party
+  - Children became unwell before parents
+  - Likely secondary spread within households (e.g. Household 04)
+  - No common food identified by interviewed cases
+  - No food safety or hygiene issues identified by Council
+  - Six faecal samples collected from three households and all are negative for bacterial pathogens
+
+***
+
+## Control Measures
+
+- Refer to Environmental Investigations and Risk Assessment sections
+
+***
+
+## Communications
+
+- Menu-based questionnaire and advice about gastroenteritis disseminated to birthday party attendees via host on 20/02/2026
+
+- Council and DH to be informed via usual processes
+
+- No other broad communications planned at this stage
+
+***
+
+## Further Actions Planned
+
+- Await collection of additional faecal samples from interviewed attendees
+
+- Await results from collected faecal samples
+
+- Await results from environmental sampling
+
+- Await further survey responses
+
+```{r}
+#
+knitr::knit_exit()
+```
+
+## Additional Analyses
+
+### Demographics
+
+```{r}
+# Age distribution, interviewed attendees and survey respondents
+linelist_survey %>%
+  dplyr::group_by(symptomatic) %>% 
+  dplyr::summarise(n      = as.double(n()),
+                   min    = round(min(age_years, na.rm = TRUE), digits = 1),
+                   max    = round(max(age_years, na.rm = TRUE), digits = 1),
+                   mean   = round(mean(age_years, na.rm = TRUE), digits = 1),
+                   median = round(median(age_years, na.rm = TRUE), digits = 1)) %>%
+  #
+  dplyr::ungroup() %>% 
+  #
+  dplyr::mutate_if(is.numeric, list(~na_if(., Inf))) %>% 
+  dplyr::mutate_if(is.numeric, list(~na_if(., -Inf))) %>% 
+  dplyr::mutate_if(is.numeric, list(~na_if(., NaN))) %>% 
+  #
+  knitr::kable(table.attr = "style = \"color: black;\"",
+               align      = "lrrrrr",
+               col.names  = c(" ", "n", "Min", "Max", "Mean", "Median")) %>%
+  #
+  kableExtra::kable_styling(full_width = FALSE,
+                            html_font  = "Arial",
+                            font_size  = 14) %>%
+  #
+  kableExtra::column_spec(2:5,
+                          width = "1.0in") %>% 
+  #
+  kableExtra::row_spec(row       = 0,
+                       bold      = TRUE,
+                       extra_css = "border-top: 2px solid lightgray; border-bottom: 2px solid lightgray;") %>%
+  #
+  kableExtra::row_spec(row       = 2,
+                       extra_css = "border-bottom: 2px solid lightgray;") %>% 
+  #
+  kableExtra::add_header_above(c(" " = 2, "Age (years)" = 4))
+```
+
+### Symptoms
+
+```{r}
+#
+linelist_survey %>% 
+  dplyr::summarise(vomiting  = sum(stringr::str_detect(vomiting, "Y"), na.rm = TRUE),
+                   diarrhoea = sum(stringr::str_detect(diarrhoea, "Y"), na.rm = TRUE),
+                   fever     = sum(stringr::str_detect(fever, "Y"), na.rm = TRUE),
+                   nausea    = sum(stringr::str_detect(nausea, "Y"), na.rm = TRUE),
+                   abdo_pain = sum(stringr::str_detect(abdo_pain, "Y"), na.rm = TRUE),
+                   headache  = sum(stringr::str_detect(headache, "Y"), na.rm = TRUE),
+                   lethargy  = sum(stringr::str_detect(lethargy, "Y"), na.rm = TRUE)) %>%
+  #
+  tidyr::pivot_longer(everything(),
+                      names_to = "symptom") %>% 
+  #
+  dplyr::rename(n = value) %>% 
+  #
+  dplyr::mutate(symptom = stringr::str_to_sentence(symptom),
+                symptom = stringr::str_replace(symptom, "_", " ")) %>%
+  #
+  dplyr::mutate(percent = round(n / (nrow(linelist_survey %>% dplyr::filter(symptomatic == "Yes"))) * 100, digits = 0)) %>% 
+  #
+  dplyr::arrange(desc(percent)) %>% 
+  #
+  knitr::kable(table.attr = "style = \"color: black;\"",
+               align      = "lrr",
+               col.names  = c("Symptom", "n", "%")) %>%
+  #
+  kableExtra::kable_styling(full_width = FALSE,
+                            html_font  = "Arial",
+                            font_size  = 14) %>%
+  #
+  kableExtra::column_spec(2:3,
+                          width = "1.0in") %>%
+  #
+  kableExtra::row_spec(row       = 0,
+                       bold      = TRUE,
+                       extra_css = "border-top: 2px solid lightgray; border-bottom: 2px solid lightgray;") %>%
+  #
+  kableExtra::row_spec(row       = 7,
+                       extra_css = "border-bottom: 2px solid lightgray;")
+```
+
+### Food History
+
+```{r}
+#
+survey_food <- survey_clean %>% 
+  dplyr::select(symptomatic,
+                symptom_onset_date,
+                party_food) %>% 
+  #
+  dplyr::mutate(platter_prosciutto = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - prosciutto") ~ "Y"),
+                platter_bresaola   = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - Bresaola") ~ "Y"),
+                platter_cheddar    = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - cheddar cheese") ~ "Y"),
+                platter_blue       = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - blue cheese") ~ "Y"),
+                platter_cornichons = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - cornichons") ~ "Y"),
+                platter_quince     = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - quince paste") ~ "Y"),
+                platter_lavosh     = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - lavosh crackers") ~ "Y"),
+                platter_bark       = dplyr::case_when(stringr::str_detect(party_food, "Tasting platter - bark crackers") ~ "Y"),
+                #
+                kids_chicken = dplyr::case_when(stringr::str_detect(party_food, "Kids meal - chicken nuggets and chips") ~ "Y"),
+                kids_fish    = dplyr::case_when(stringr::str_detect(party_food, "Kids meal - fish and chips") ~ "Y"),
+                #
+                pizza_margherita = dplyr::case_when(stringr::str_detect(party_food, "Margherita pizza") ~ "Y"),
+                pizza_pumpkin    = dplyr::case_when(stringr::str_detect(party_food, "Pumpkin pizza") ~ "Y"),
+                pizza_ham        = dplyr::case_when(stringr::str_detect(party_food, "Ham and pineapple pizza") ~ "Y"),
+                pizza_chicken    = dplyr::case_when(stringr::str_detect(party_food, "Chicken pizza") ~ "Y"),
+                pizza_prosciutto = dplyr::case_when(stringr::str_detect(party_food, "Prosciutto pizza") ~ "Y"),
+                #
+                chips = dplyr::case_when(stringr::str_detect(party_food, "Chips with aioli") ~ "Y"),
+                #
+                fruit_grapes       = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - grapes") ~ "Y"),
+                fruit_strawberries = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - strawberries") ~ "Y"),
+                fruit_watermelon   = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - watermelon") ~ "Y"),
+                fruit_pineapple    = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - pineapple") ~ "Y"),
+                fruit_blueberries  = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - blueberries") ~ "Y"),
+                fruit_raspberries  = dplyr::case_when(stringr::str_detect(party_food, "Fruit platter - raspberries") ~ "Y"),
+                #
+                dessert_tart    = dplyr::case_when(stringr::str_detect(party_food, "Blueberry and custard fruit tarts") ~ "Y"),
+                dessert_cake    = dplyr::case_when(stringr::str_detect(party_food, "Chocolate cake with Nutella buttercream") ~ "Y"),
+                dessert_crackle = dplyr::case_when(stringr::str_detect(party_food, "Chocolate crackles") ~ "Y"),
+                dessert_donut   = dplyr::case_when(stringr::str_detect(party_food, "Jam donuts") ~ "Y"),
+                #
+                sorbet_orange       = dplyr::case_when(stringr::str_detect(party_food, "Blood orange sorbet") ~ "Y"),
+                sorbet_passionfruit = dplyr::case_when(stringr::str_detect(party_food, "Passionfruit sorbet") ~ "Y"),
+                sorbet_raspberry    = dplyr::case_when(stringr::str_detect(party_food, "Raspberry sorbet") ~ "Y"),
+                #
+                gelato_honey     = dplyr::case_when(stringr::str_detect(party_food, "Honey gelato") ~ "Y"),
+                gelato_chocolate = dplyr::case_when(stringr::str_detect(party_food, "Chocolate gelato") ~ "Y"),
+                gelato_vanilla   = dplyr::case_when(stringr::str_detect(party_food, "Vanilla gelato") ~ "Y"),
+                #
+                drink_juice = dplyr::case_when(stringr::str_detect(party_food, "Juice") ~ "Y"),
+                drink_other = dplyr::case_when(stringr::str_detect(party_food, "Other drink") ~ "Y"))
+```
+
