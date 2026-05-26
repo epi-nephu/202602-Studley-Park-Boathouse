@@ -136,9 +136,12 @@ f_format_table <- function(data) {
                                 "Total", "Attack rate", "Odds ratio", 
                                 "p-value", "Lower 95% CI", "Upper 95% CI")) %>%
     #
-    kableExtra::kable_classic_2(full_width = TRUE,
-                                html_font  = "Arial",
-                                font_size  = 13) %>%
+    kableExtra::kable_styling(bootstrap_options = c("hover", "responsive"),
+                              #
+                              full_width = FALSE,
+                              position   = "center",
+                              html_font  = "Arial",
+                              font_size  = 12) %>%
     #
     kableExtra::column_spec(column = 1,
                             width  = "2in") %>%

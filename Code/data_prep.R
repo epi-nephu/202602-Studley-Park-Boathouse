@@ -4,9 +4,56 @@
 # Read in and wrangle linelist and Forms survey data
 
 ################################################################################
+# Load packages
+################################################################################
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(here,
+               tidyverse,
+               tidyr,
+               rmarkdown,
+               quarto,
+               bsicons,
+               rlang,
+               glue,
+               janitor,
+               readxl,
+               sf,
+               knitr,
+               kableExtra,
+               colorRamps,
+               extrafont,
+               ggnewscale,
+               plotly,
+               leaflet)
+
+################################################################################
+# Setup and constants
+################################################################################
+# Date of report generation
+date_report <- Sys.Date()
+date_update <- paste0("data as of ", format(date_report, format = "%d/%m/%Y"))
+
+# Date and start time of common event
+date_event     <- lubridate::ymd("2026-02-15")
+datetime_event <- lubridate::ymd_hms(paste0("2026-02-15", "15:00:00"))
+
+################################################################################
+# Menu items
+################################################################################
+menu_platter <- c("platter_prosciutto", "platter_bresaola", "platter_cheddar", "platter_blue", 
+                  "platter_cornichons", "platter_quince", "platter_lavosh", "platter_bark")
+menu_pizza   <- c("pizza_margherita", "pizza_pumpkin", "pizza_ham", "pizza_chicken", "pizza_prosciutto")
+menu_fruit   <- c("fruit_grapes", "fruit_strawberries", "fruit_watermelon", "fruit_pineapple", 
+                  "fruit_blueberries", "fruit_raspberries")
+menu_dessert <- c("dessert_tart", "dessert_cake", "dessert_crackle", "dessert_donut", "sorbet_orange", 
+                  "sorbet_passionfruit", "sorbet_raspberry", "gelato_honey", "gelato_chocolate", "gelato_vanilla")
+menu_other   <- c("kids_chicken", "kids_fish", "chips", "drink_juice", "drink_other")
+
+################################################################################
 # Linelist
 ################################################################################
-linelist_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Linelist_Studley_Park_", filedate, ".xlsx"),
+linelist_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Linelist_Studley_Park", ".xlsx"),
                                   sheet     = "Linelist",
                                   skip      = 2,
                                   guess_max = min(100000, Inf)) %>% 
@@ -92,7 +139,7 @@ linelist_clean <- linelist_raw %>%
 ################################################################################
 # Forms survey data
 ################################################################################
-survey_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Survey_Studley_Park_", filedate, ".xlsx"),
+survey_raw <- readxl::read_xlsx(paste0(here::here(), "/Data/Survey_Studley_Park", ".xlsx"),
                                 guess_max = min(100000, Inf)) %>% 
   #
   janitor::clean_names()

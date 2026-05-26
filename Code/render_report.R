@@ -11,7 +11,7 @@ pacman::p_load(here,
                fs)
 
 # Update file name for output html
-outname <- paste0(format(Sys.Date(), "%Y%m%d"), " ",
+outname <- paste0(Sys.Date(), " ",
                   "Studley Park Boathouse ", # Outbreak/cluster name
                   "Situation Report ",
                   "03", # SitRep number

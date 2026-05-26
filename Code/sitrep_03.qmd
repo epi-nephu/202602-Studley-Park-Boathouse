@@ -19,31 +19,6 @@ format:
 
 ```{r}
 #
-if (!require("pacman")) install.packages("pacman")
-
-pacman::p_load(here,
-               tidyverse,
-               tidyr,
-               rmarkdown,
-               quarto,
-               bsicons,
-               rlang,
-               glue,
-               janitor,
-               readxl,
-               sf,
-               knitr,
-               kableExtra,
-               colorRamps,
-               extrafont,
-               ggnewscale,
-               plotly,
-               leaflet)
-```
-
-
-```{r}
-#
 options(knitr.kable.NA = '--')
 
 here::i_am("Code/sitrep_03.qmd")
@@ -51,43 +26,11 @@ here::i_am("Code/sitrep_03.qmd")
 
 
 ```{r}
-# Date of report generation
-datetime_update <- paste0("data as of ", format(Sys.Date(), format = "%d/%m/%Y"))
-filedate        <- format(Sys.Date(), format = "%Y%m%d")
-
-# Date and start time of common event
-date_event     <- lubridate::ymd("2026-02-15")
-datetime_event <- lubridate::ymd_hms(paste0("2026-02-15", "15:00:00"))
-
-# x-axis limits for epi curves (dates only)
-date_epicurve_start <- lubridate::ymd(date_event - days(3))
-date_epicurve_end   <- Sys.Date() + 2
-
-# x-axis limits for epi curves (dates and times)
-datetime_epicurve_start <- lubridate::ymd_hms(paste0("2026-02-15", "00:00:00"))
-datetime_epicurve_end   <- lubridate::ymd_hms(paste0("2026-02-20", "00:00:00"))
-
-# Menu items
-menu_platter <- c("platter_prosciutto", "platter_bresaola", "platter_cheddar", "platter_blue", 
-                  "platter_cornichons", "platter_quince", "platter_lavosh", "platter_bark")
-menu_pizza   <- c("pizza_margherita", "pizza_pumpkin", "pizza_ham", "pizza_chicken", "pizza_prosciutto")
-menu_fruit   <- c("fruit_grapes", "fruit_strawberries", "fruit_watermelon", "fruit_pineapple", 
-                  "fruit_blueberries", "fruit_raspberries")
-menu_dessert <- c("dessert_tart", "dessert_cake", "dessert_crackle", "dessert_donut", "sorbet_orange", 
-                  "sorbet_passionfruit", "sorbet_raspberry", "gelato_honey", "gelato_chocolate", "gelato_vanilla")
-menu_other   <- c("kids_chicken", "kids_fish", "chips", "drink_juice", "drink_other")
-```
-
-
-```{r}
-# Read in functions
-source(here::here("Code", "Functions", "f_menu_analyses.R"))
-```
-
-
-```{r}
 # Read in and wrangle data
 source(here::here("Code", "data_prep.R"))
+
+# Read in functions
+source(here::here("Code", "Functions", "f_menu_analyses.R"))
 ```
 
 
@@ -110,7 +53,7 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 | Incident name             | Studley Park Boathouse [norovirus outbreak]{.red-text}            |
 |:--------------------------|:------------------------------------------------------------------|
 | PHESS ID                  | 320266223985                                                      |
-| Date/time Sit Rep updated | [`r format(Sys.Date(), format = "%d/%m/%Y")`]{.red-text}          |
+| Date/time Sit Rep updated | [`r format(date_report, format = "%d/%m/%Y")`]{.red-text}         |
 | Sit Rep approved by (IC)  | [Claire Gordon]{.red-text}                                        |
 | Sit Rep prepared by (IO)  | Alana Little                                                      |
 
@@ -147,7 +90,7 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 <div style="height: 0.1em;"></div>
 
 - Menu-based questionnaire distributed to birthday party attendees via party host on 20/02/2026
-  - Responses received from 13 attendees as of `r format(Sys.Date(), format = "%d/%m/%Y")`
+  - Responses received from 13 attendees as of `r format(date_report, format = "%d/%m/%Y")`
   - 10/13 survey respondents symptomatic
   - [No clear food source identified from interviews or survey responses]{.red-text}
 
@@ -221,11 +164,9 @@ knitr::include_graphics(here::here("Images", "nephu_logo.png"))
 
 #### Figure 1
 
-**Number of people reporting symptoms, interviewed attendees and survey respondents, by symptom onset date, [`r datetime_update`]{.red-text}**
+**Number of people reporting symptoms, interviewed attendees and survey respondents, by symptom onset date, [`r date_update`]{.red-text}**
 
 ```{r}
-#| fig-align: center
-#| out-width: "100%"
 #
 data_histogram <- linelist_survey %>% 
   dplyr::filter(!is.na(symptom_onset_date)) %>% 
@@ -235,6 +176,20 @@ data_histogram <- linelist_survey %>%
   dplyr::mutate(hover_text = paste0("Symptom onset: ", format(symptom_onset_date, "%d/%m/%Y"), "<br>",
                                     "Cases: ", n))
 
+x_expand_max = as.numeric(lubridate::ymd(date_report) - max(lubridate::ymd(linelist_survey$symptom_onset_date), na.rm = TRUE))
+
+y_max = dplyr::case_when(max(data_histogram$n) < 5 ~ 5,
+                         TRUE ~ max(data_histogram$n))
+
+y_expand <- dplyr::case_when(y_max == 5 ~ 0.25,
+                             TRUE ~ y_max * 0.1)
+```
+
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+ 
 figure <- data_histogram %>%
   ggplot(aes(x = symptom_onset_date, y = n, text = hover_text)) +
   #
@@ -243,20 +198,19 @@ figure <- data_histogram %>%
            width = 1,
            alpha = 1) +
   #
-  geom_segment(aes(x = date_event, xend = date_event, y = 0, yend = max(n, na.rm = TRUE)),
+  geom_segment(aes(x = date_event, xend = date_event, y = 0, yend = y_max),
                color       = "purple",
                linetype    = "dashed",
                linewidth   = 0.25,
                inherit.aes = FALSE) +
   #
-  scale_x_date(date_breaks = "1 day",
+  scale_x_date(expand      = expansion(add = c(2, x_expand_max)),
+               date_breaks = "1 day",
                date_labels = "%d-%b") +
   #
-  coord_cartesian(xlim = c(date_epicurve_start, date_epicurve_end)) +
-  #
-  scale_y_continuous(limits = c(0, NA),
+  scale_y_continuous(limits = c(0, y_max),
                      breaks = scales::breaks_width(1),
-                     expand = expansion(add = c(0, 0.1))) +
+                     expand = expansion(add = c(0, y_expand))) +
   #
   labs(x = NULL,
        y = NULL) +
@@ -290,11 +244,9 @@ Note:<br>
 
 #### Figure 2
 
-**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time, [`r datetime_update`]{.red-text}**
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time, [`r date_update`]{.red-text}**
 
 ```{r}
-#| fig-align: center
-#| out-width: "100%"
 #
 data_histogram <- linelist_clean %>% 
   dplyr::filter(!is.na(symptom_onset_datetime)) %>%
@@ -305,7 +257,23 @@ data_histogram <- linelist_clean %>%
   #
   dplyr::mutate(hover_text = paste0("Symptom onset: ", format(hours_group, "%d/%m/%Y %H:%M"), "<br>",
                                     "Cases: ", n))
- 
+
+x_expand_min <- datetime_event - hours(24)
+
+x_expand_max <- max(data_histogram$hours_group) + hours(24)
+
+y_max = dplyr::case_when(max(data_histogram$n) < 5 ~ 5,
+                         TRUE ~ max(data_histogram$n))
+
+y_expand <- dplyr::case_when(y_max == 5 ~ 0.25,
+                             TRUE ~ y_max * 0.1)
+```
+
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+
 figure <- data_histogram %>%
   ggplot(aes(x = hours_group, y = n, text = hover_text)) +
   #
@@ -314,25 +282,20 @@ figure <- data_histogram %>%
            width = 10800,
            alpha = 1) +
   #
-  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = y_max),
                color       = "purple",
                linetype    = "dashed",
                linewidth   = 0.25,
                inherit.aes = FALSE) +
   #
-  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "3 hours"), 
-                                datetime_epicurve_end,
-                                by = "6 hours"),
-                   #
-                   date_labels = "%d-%b %H:%M",
-                   #
-                   expand = c(0, 0)) +
+  scale_x_datetime(limits      = c(x_expand_min, x_expand_max),
+                   expand      = expansion(add = c(0, 0)),
+                   date_breaks = "6 hours",
+                   date_labels = "%d-%b %H:%M") +
   #
-  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
-  #
-  scale_y_continuous(limits = c(0, 5),
+  scale_y_continuous(limits = c(0, y_max),
                      breaks = scales::breaks_width(1),
-                     expand = expansion(add = c(0, 0.125))) +
+                     expand = expansion(add = c(0, y_expand))) +
   #
   labs(x = NULL,
        y = NULL) +
@@ -373,11 +336,9 @@ Note:<br>
 
 #### Figure 3
 
-**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and household, [`r datetime_update`]{.red-text}**
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and household, [`r date_update`]{.red-text}**
 
 ```{r}
-#| fig-align: center
-#| out-width: "100%"
 #
 data_histogram <- linelist_clean %>% 
   dplyr::filter(!is.na(symptom_onset_datetime)) %>%
@@ -390,31 +351,42 @@ data_histogram <- linelist_clean %>%
                                     "Household: ", household, "<br>",
                                     "Cases: ", n))
 
+x_expand_min <- datetime_event - hours(24)
+
+x_expand_max <- max(data_histogram$hours_group) + hours(24)
+
+y_max = dplyr::case_when(max(data_histogram$n) < 5 ~ 5,
+                         TRUE ~ max(data_histogram$n))
+
+y_expand <- dplyr::case_when(y_max == 5 ~ 0.25,
+                             TRUE ~ y_max * 0.1)
+```
+
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+
 figure <- data_histogram %>%
   ggplot(aes(x = hours_group, y = n, fill = household, text = hover_text)) +
   #
   geom_col(color = "black",
            alpha = 1) +
   #
-  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = y_max),
                color       = "purple",
                linetype    = "dashed",
                linewidth   = 0.25,
                inherit.aes = FALSE) +
   #
-  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "6 hours"), 
-                                datetime_epicurve_end,
-                                by = "6 hours"),
-                   #
-                   date_labels = "%d-%b %H:%M",
-                   #
-                   expand = c(0, 0)) +
+  scale_x_datetime(limits      = c(x_expand_min, x_expand_max),
+                   expand      = expansion(add = c(0, 0)),
+                   date_breaks = "6 hours",
+                   date_labels = "%d-%b %H:%M") +
   #
-  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
-  #
-  scale_y_continuous(limits = c(0, 5),
+  scale_y_continuous(limits = c(0, y_max),
                      breaks = scales::breaks_width(1),
-                     expand = expansion(add = c(0, 0.125))) +
+                     expand = expansion(add = c(0, y_expand))) +
   #
   labs(x    = NULL,
        y    = NULL,
@@ -456,11 +428,9 @@ Note:<br>
 
 #### Figure 4
 
-**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and age, [`r datetime_update`]{.red-text}**
+**Number of people reporting symptoms, interviewed attendees, by symptom onset date and time and age, [`r date_update`]{.red-text}**
 
 ```{r}
-#| fig-align: center
-#| out-width: "100%"
 #
 data_histogram <- linelist_clean %>% 
   dplyr::filter(!is.na(symptom_onset_datetime)) %>%
@@ -473,31 +443,42 @@ data_histogram <- linelist_clean %>%
                                     "Age: ", age_group, "<br>",
                                     "Cases: ", n))
 
+x_expand_min <- datetime_event - hours(24)
+
+x_expand_max <- max(data_histogram$hours_group) + hours(24)
+
+y_max = dplyr::case_when(max(data_histogram$n) < 5 ~ 5,
+                         TRUE ~ max(data_histogram$n))
+
+y_expand <- dplyr::case_when(y_max == 5 ~ 0.25,
+                             TRUE ~ y_max * 0.1)
+```
+
+
+```{r}
+#| fig-align: center
+#| out-width: "100%"
+
 figure <- data_histogram %>%
   ggplot(aes(x = hours_group, y = n, fill = age_group, text = hover_text)) +
   #
   geom_col(color = "black",
            alpha = 1) +
   #
-  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = 5),
+  geom_segment(aes(x = datetime_event, xend = datetime_event, y = 0, yend = y_max),
                color       = "purple",
                linetype    = "dashed",
                linewidth   = 0.25,
                inherit.aes = FALSE) +
   #
-  scale_x_datetime(breaks = seq(lubridate::floor_date(datetime_epicurve_start, "6 hours"), 
-                                datetime_epicurve_end,
-                                by = "6 hours"),
-                   #
-                   date_labels = "%d-%b %H:%M",
-                   #
-                   expand = c(0, 0)) +
+  scale_x_datetime(limits      = c(x_expand_min, x_expand_max),
+                   expand      = expansion(add = c(0, 0)),
+                   date_breaks = "6 hours",
+                   date_labels = "%d-%b %H:%M") +
   #
-  coord_cartesian(xlim = c(datetime_epicurve_start, datetime_epicurve_end)) +
-  #
-  scale_y_continuous(limits = c(0, 5),
+  scale_y_continuous(limits = c(0, y_max),
                      breaks = scales::breaks_width(1),
-                     expand = expansion(add = c(0, 0.125))) +
+                     expand = expansion(add = c(0, y_expand))) +
   #
   labs(x    = NULL,
        y    = NULL,
@@ -604,14 +585,13 @@ Note:<br>
 
 - [No further actions required]{.red-text}
 
-```{r}
-#
-knitr::knit_exit()
-```
+***
 
-## Additional Analyses
+## Appendix: Additional Analyses
 
 ### Demographics
+
+**Summary statistics for age, interviewed attendees and survey respondents, [`r date_update`]{.red-text}**
 
 ```{r}
 # Age distribution, interviewed attendees and survey respondents
@@ -651,6 +631,8 @@ linelist_survey %>%
 ```
 
 ### Symptoms
+
+**Number and percentage of people reporting symptoms, interviewed attendees and survey respondents, [`r date_update`]{.red-text}**
 
 ```{r}
 #
@@ -694,7 +676,11 @@ linelist_survey %>%
                        extra_css = "border-bottom: 2px solid lightgray;")
 ```
 
-### Food History: Cheese Platter
+***
+
+## Appendix: Food History
+
+### Cheese Platter
 
 ```{r, warning = FALSE}
 # Create crosstab
@@ -732,7 +718,7 @@ crosstab_platter %>%
   f_format_table()
 ```
 
-### Food History: Pizza
+### Pizza
 
 ```{r, warning = FALSE}
 # Create crosstab
@@ -767,7 +753,7 @@ crosstab_pizza %>%
   f_format_table()
 ```
 
-### Food History: Fruit Platter
+### Fruit Platter
 
 ```{r, warning = FALSE}
 # Create crosstab
@@ -803,7 +789,7 @@ crosstab_fruit %>%
   f_format_table()
 ```
 
-### Food History: Dessert
+### Dessert
 
 ```{r, warning = FALSE}
 # Create crosstab
@@ -843,7 +829,7 @@ crosstab_dessert %>%
   f_format_table()
 ```
 
-### Food History: Other Foods
+### Other Foods
 
 ```{r, warning = FALSE}
 # Create crosstab
